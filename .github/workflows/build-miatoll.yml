@@ -1,0 +1,51 @@
+name: Build Miatoll UEFI with Battery Patch
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Miatoll UEFI (${{ matrix.device }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        device:
+          - miatoll-huaxing
+          - miatoll-tianma
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install build tools and iasl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential uuid-dev iasl git nasm python-is-python3 gettext gcc-aarch64-linux-gnu clang llvm device-tree-compiler abootimg
+
+      - name: Patch ACPI Tables for Battery & Charger
+        run: |
+          echo "=== Applying Battery & Charger Fix for Miatoll ==="
+          # Check if custom ASL exists in repo or inject SSDT_BATTERY
+          if [ -f "Platform/Xiaomi/sm7125/AcpiTables/miatoll/dsdt_battery_charger.asl" ]; then
+            echo "Compiling dsdt_battery_charger.asl..."
+            iasl -tc -p Platform/Xiaomi/sm7125/AcpiTables/miatoll/SSDT_BATTERY.aml Platform/Xiaomi/sm7125/AcpiTables/miatoll/dsdt_battery_charger.asl
+            
+            # Add SSDT_BATTERY to miatoll.fdf.inc if not already added
+            if ! grep -q "SSDT_BATTERY.aml" Platform/Xiaomi/sm7125/miatoll.fdf.inc; then
+              sed -i '/SECTION UI = "AcpiTables"/i \ \tSECTION RAW = Platform/Xiaomi/sm7125/AcpiTables/miatoll/SSDT_BATTERY.aml' Platform/Xiaomi/sm7125/miatoll.fdf.inc
+              echo "Added SSDT_BATTERY to miatoll.fdf.inc"
+            fi
+          fi
+
+      - name: Build UEFI Boot Image for ${{ matrix.device }}
+        run: |
+          ./build.sh --device ${{ matrix.device }}
+
+      - name: Upload UEFI Boot Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.device }}-uefi
+          path: ./*.img
